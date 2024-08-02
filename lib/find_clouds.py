@@ -35,7 +35,7 @@ def get_allclouds(allmask,neighbors,verbose=False):
             continue
         cloud = get_cold_neighbors(j,allmask,neighbors,None,[],verbose)
         allclouds.append(cloud)
-    print('done')
+    # print('done')
     return allclouds
 
 def get_cold_neighbors(istart,allmask,neighbors,tosearch=None,cloud=[],verbose=False):
@@ -66,6 +66,9 @@ def get_cold_neighbors(istart,allmask,neighbors,tosearch=None,cloud=[],verbose=F
             print('len(tosearch_next)',len(tosearch_next))
     return get_cold_neighbors(istart,allmask,neighbors,np.unique(tosearch_next),cloud,verbose)
 
+def get_snum(filename):
+    return int((filename.split('_')[1]).split('.')[0])
+
 ##########
 ## main ##
 ##########
@@ -79,38 +82,53 @@ if __name__ == '__main__':
 
     folder = sys.argv[1]
     filelist = os.listdir(folder)
-    filelist = list(np.array(filelist)[[f.endswith('_cutout.hdf5') for f in filelist]])
-    filelist.sort(key=lambda x:int(x.split('_')[2]))
+    filelist = list(np.array(filelist)[[f.startswith('snap_') for f in filelist]])
+    filelist.sort(key=lambda x:get_snum(x))
+    print("Found {} files in {}".format(len(filelist),folder))
 
     outdir = sys.argv[2]
-    overwrite = bool(sys.argv[3])
+    print("Outdir: {}".format(outdir))
+    if (not os.path.exists(outdir)):
+        os.makedirs(outdir)
+    overwrite = int(sys.argv[3])
+    print("Overwrite: {}".format(bool(overwrite)))
+    print("")
 
     for fname in filelist:
+        snum = get_snum(fname)
         if (not overwrite):
-            if (os.path.exists(outdir+"/allclouds_subbox0_{}_IDs.npy".format(fname.split('_')[2]))):
+            if (os.path.exists(outdir+"/allclouds_{}_IDs.npy".format(snum))):
+                print("Skipping {}...".format(fname))
                 continue
         print("Starting {}...".format(fname),flush=True)
+        s5 = arepo.Snapshot(folder+'/'+fname,parttype=[5])
+        snap_center = s5.part5.pos[0]
+        s5.close()
         s = arepo.Snapshot(folder+'/'+fname,parttype=[0])
 
         subtemp = gastemp(s)
-        radii = np.linalg.norm(s.pos,axis=1)
+        radii = np.linalg.norm(s.pos-snap_center,axis=1)
         mask = radii < 200
         Tmask = subtemp[mask] < 10**4.5
 
         stime = time.time()
-        delmesh = Delaunay(s.pos[mask])
+        delmesh = Delaunay(s.pos[mask],qhull_options="Qbb Qc Qz Q12 Q3 Q5 Q8")
         print("Delaunay: {:.2f} s".format(time.time()-stime),flush=True)
         stime = time.time()
         neighbors = find_neighbors(delmesh)
         print("Neighbors: {:.2f} s".format(time.time()-stime),flush=True)
 
-        allclouds = get_allclouds(Tmask,neighbors)
+        stime = time.time()
+        allclouds = get_allclouds(Tmask,neighbors,verbose=False)
+        # allclouds = get_allclouds(s,Tmask,verbose=False)
+        print("Get allclouds: {:.2f} s".format(time.time()-stime),flush=True)
         cloudids = [s.id[mask][c] for c in allclouds]
 
         final = np.empty(len(cloudids),dtype=object)
         final[:] = cloudids
-        np.save(outdir+"/allclouds_subbox0_{}_IDs.npy".format(fname.split('_')[2]),final)
+        np.save(outdir+"/allclouds_{}_IDs.npy".format(snum),final)
 
-        del delmesh,neighbors,allclouds,final
+        s.close()
+        del allclouds,final,s,s5
         gc.collect()
         print("{} done.\n".format(fname),flush=True)
