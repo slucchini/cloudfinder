@@ -14,13 +14,13 @@ python3 lib/find_clouds.py $SNAP_DIR $OUT_DIR 0
 python3 lib/build_network_ids.py $SNAP_DIR $OUT_DIR 200 300
 ```
 
-Both stages are typically run on a cluster via the provided SLURM scripts (`cloudfinder.sbatch.sh`, `buildnetwork_ids.sbatch.sh`).
-
 ## Core scripts
 
 ### `lib/find_clouds.py`
 
 Identifies clouds in a single snapshot. Selects cold gas cells, builds a Delaunay triangulation to determine neighbors, and uses connected components on the neighbor graph to group cold cells into discrete clouds. Writes a catalog of clouds (and their member particle IDs) to `OUT_DIR`.
+
+By default, identifies clouds within 200 comoving kpc/h centered around the black hole particle. Clouds are classified as contiguous groupings of connected Voronoi cells which all have temperatures below $10^{4.5}$ K. This cutoff was chosen for use with the [IllustrisTNG](https://tng-project.org) simulations which have a pressure floor corresponding to a temperature of $10^4$ K.
 
 **Arguments:** `SNAP_DIR OUT_DIR SNAPNUM`
 
