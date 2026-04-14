@@ -1,10 +1,10 @@
-import arepo, gc, time, pickle, sys
+import arepo, gc, time, pickle, sys, os
 import numpy as np, matplotlib as mpl, matplotlib.pyplot as plt
 import networkx as nx
 import astropy.units as u, astropy.constants as constants, astropy.coordinates as coord
 from tqdm import tqdm
 from scipy.optimize import linprog
-from .CloudObj import *
+from CloudObj import *
 import multiprocess as mp
 
 # from https://stackoverflow.com/questions/16750618/whats-an-efficient-way-to-find-if-a-point-lies-in-the-convex-hull-of-a-point-cl
@@ -39,7 +39,7 @@ def get_age(h,WM,WV,z):
 def check_overlap(i):
     edges = []
     co = cloud_objs_prev[i]
-    p = s_prev.pos[snapmasks_prev[i]]; v = s_prev.vel[snapmasks_prev[i]]
+    p = np.array(s_prev.pos[snapmasks_prev[i]]); v = np.array(s_prev.vel[snapmasks_prev[i]])
     newp = p*u.kpc+v*u.km/u.s*dt
     future_cloud = newp.to(u.kpc).value
     
@@ -69,12 +69,19 @@ if __name__ == '__main__':
     outdir = sys.argv[2]
     snapvals = np.arange(int(sys.argv[3]),int(sys.argv[4])+1)
     stime = time.time()
+
+    snapbase = folder+'/snap_{:03}.hdf5'
+    if (not os.path.exists(snapbase.format(snapvals[0]))):
+        snapbase = folder+'/snapdir_{0:03}/snap_{0:03}.0.hdf5'
+        if (not os.path.exists(snapbase.format(snapvals[0]))):
+            raise Exception("Cannot find files at {} or {}".format(folder+'/snap_{:03}.hdf5'.format(snapvals[0]),snapbase.format(snapvals[0])))
+
     for si in snapvals:
         print("Starting {}...".format(si),flush=True,end='')
         stime1 = time.time()
 
-        s = arepo.Snapshot(folder+'/snap_subbox0_{}_cutout.hdf5'.format(si),parttype=[0])
-        allclouds = np.load(outdir+"/allclouds_subbox0_{}_IDs.npy".format(si),allow_pickle=True)
+        s = arepo.Snapshot(snapbase.format(si),parttype=[0],combineFiles=True)
+        allclouds = np.load(outdir+"/allclouds_{}_IDs.npy".format(si),allow_pickle=True)
         allcloudlen = np.array([len(cl) for cl in allclouds])
         cloudids = allclouds[(allcloudlen >= 2) & (allcloudlen < max(allcloudlen))]
         
@@ -83,6 +90,9 @@ if __name__ == '__main__':
         sids = s.id[argsort]
         snapmasks = [co.get_snapmask(sids,argsort) for co in cloud_objs]
         G.add_nodes_from(cloud_objs,snapnum=si)
+
+        with open(outdir+"/s{}_snapmask_min2.pkl".format(si),'wb') as f:
+            pickle.dump(snapmasks,f)
         
         if si > snapvals[0]:
             dt = (get_age_snap(s) - get_age_snap(s_prev))*u.Gyr

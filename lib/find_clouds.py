@@ -1,17 +1,22 @@
 import time, numpy as np, arepo, os, gc, sys
 import astropy.units as u, astropy.constants as constants
-from matplotlib.colors import LogNorm
 from scipy.spatial import Delaunay
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
+from tqdm import tqdm
 
 def gastemp(s):
     xe = s['ne']
     U = np.array(s['InternalEnergy'])*u.km**2/u.s**2
 
-    Xh = 0.76
+    if 'gmet' in s.data:
+        Xh = s['gmet'][:,0]
+    else:
+        Xh = 0.76
     gamma = 5./3.
 
-    mu = (1 + Xh /(1-Xh)) / (1 + Xh/(4*(1-Xh)) + xe)*constants.m_p
-    # mu = 4./(1 + 3*Xh + 4*Xh*xe)*constants.m_p.cgs.value
+    # mu = (1 + Xh /(1-Xh)) / (1 + Xh/(4*(1-Xh)) + xe)*constants.m_p
+    mu = 4./(1 + 3*Xh + 4*Xh*xe)*constants.m_p
     temp = (gamma - 1)*U/constants.k_B*mu
 
     return temp.to('K').value
@@ -23,51 +28,33 @@ def find_neighbors(tri):
         neib.append(list(l[1][l[0][i]:l[0][i+1]]))
     return neib
 
-def get_allclouds(allmask,neighbors,verbose=False):
-    allis = np.nonzero(allmask)[0]
-    allclouds = []
-    for j in allis:
-        # print("\r{}/{}...".format(j+1,len(allis)),end='',flush=True)
-        if verbose:
-            print('\nStarting',j)
-            print(allclouds)
-        if len(allclouds)>0 and j in np.hstack(allclouds):
-            continue
-        cloud = get_cold_neighbors(j,allmask,neighbors,None,[],verbose)
-        allclouds.append(cloud)
-    # print('done')
-    return allclouds
+def get_allclouds(coldidxs,neighbors):
+    coldidxs = np.array(coldidxs, dtype=int)
+    idx_map = {orig:i for i, orig in enumerate(coldidxs)}
 
-def get_cold_neighbors(istart,allmask,neighbors,tosearch=None,cloud=[],verbose=False):
-    if (tosearch is None):
-        tosearch = [istart]
-        if (allmask[istart]):
-            cloud.append(istart)
-        else:
-            raise Exception('istart ({}) not in mask'.format(istart))
-    elif len(tosearch) == 0:
-        return np.sort(cloud)
-    tosearch_next = []
-    if verbose:
-        print('tosearch: ',tosearch)
-    for i in tosearch:
-        if (i>=len(neighbors)):
-            print(istart,i,len(neighbors))
-        neib = neighbors[i]
-        if verbose:
-            print(i,'neighbors',neib)
-        for n in neib:
-            if (allmask[n]):
-                if not n in cloud:
-                    cloud.append(n)
-                    tosearch_next.append(n)
-        if verbose:
-            # print('cloud',cloud)
-            print('len(tosearch_next)',len(tosearch_next))
-    return get_cold_neighbors(istart,allmask,neighbors,np.unique(tosearch_next),cloud,verbose)
+    rows, cols = [], []
+    for i in coldidxs:
+        ui = idx_map[i]
+        for j in neighbors[i]:
+            vj = idx_map.get(j)
+            if vj is not None:
+                rows.append(ui)
+                cols.append(vj)
+
+    # build symmetric sparse graph
+    data = np.ones(len(rows), dtype=bool)
+    G = coo_matrix((data, (rows, cols)), shape=(len(coldidxs), len(coldidxs)))
+    G = G + G.T  # ensure symmetry
+
+    n_components, labels = connected_components(csgraph=G, directed=False)
+    cloudidxs = -np.ones(len(neighbors), dtype=int)
+    cloudidxs[coldidxs] = labels
+
+    return cloudidxs
 
 def get_snum(filename):
-    return int((filename.split('_')[1]).split('.')[0])
+    # return int((filename.split('_')[1]).split('.')[0])
+    return int(filename.split('_')[1][:3])
 
 ##########
 ## main ##
@@ -77,39 +64,65 @@ def get_snum(filename):
 ## 1: path to snapshots
 ## 2: path to allclouds files
 ## 3: overwrite boolean (1 = overwrite)
+## 4: single snapshot number (optional, -1 to do all)
 
 if __name__ == '__main__':
 
     folder = sys.argv[1]
     filelist = os.listdir(folder)
-    filelist = list(np.array(filelist)[[f.startswith('snap_') for f in filelist]])
+    filelist = list(np.array(filelist)[[f.startswith('snap_') & f.endswith('.hdf5') for f in filelist]])
     filelist.sort(key=lambda x:get_snum(x))
+    if (len(filelist) == 0):
+        filelist = os.listdir(folder)
+        filelist = list(np.array(filelist)[[f.startswith('snapdir_') for f in filelist]])
+        snums = np.array([get_snum(x) for x in filelist])
+        filelist = [filelist[i]+'/snap_{:03}.0.hdf5'.format(snums[i]) for i in range(len(snums))]
+        filelist = np.array(filelist)[np.argsort(snums)]
+    filelist = filelist[::-1]
     print("Found {} files in {}".format(len(filelist),folder))
 
     outdir = sys.argv[2]
     print("Outdir: {}".format(outdir))
     if (not os.path.exists(outdir)):
         os.makedirs(outdir)
+    plotdir = outdir+"/plots/"
+    if (not os.path.exists(plotdir)):
+        os.makedirs(plotdir)
     overwrite = int(sys.argv[3])
     print("Overwrite: {}".format(bool(overwrite)))
+
+    if (len(sys.argv) > 4):
+        onlysnum = int(sys.argv[4])
+        if (onlysnum >= 0):
+            print("Only finding clouds for snapshot number: {}".format(onlysnum))
+    else:
+        onlysnum = -1
     print("")
 
     for fname in filelist:
         snum = get_snum(fname)
+        if (onlysnum > 0):
+            if (snum != onlysnum):
+                continue
         if (not overwrite):
             if (os.path.exists(outdir+"/allclouds_{}_IDs.npy".format(snum))):
                 print("Skipping {}...".format(fname))
                 continue
         print("Starting {}...".format(fname),flush=True)
-        s5 = arepo.Snapshot(folder+'/'+fname,parttype=[5])
-        snap_center = s5.part5.pos[0]
-        s5.close()
-        s = arepo.Snapshot(folder+'/'+fname,parttype=[0])
+        try:
+            s5 = arepo.Snapshot(folder+'/'+fname,parttype=[5],combineFiles=True)
+            snap_center = s5.part5.pos[0]
+            s5.close()
+        except:
+            print("Failed {} (no BHs)!".format(fname))
+            continue
+        s = arepo.Snapshot(folder+'/'+fname,parttype=[0],combineFiles=True)
 
         subtemp = gastemp(s)
         radii = np.linalg.norm(s.pos-snap_center,axis=1)
         mask = radii < 200
         Tmask = subtemp[mask] < 10**4.5
+        coldidxs = np.nonzero(Tmask)[0]
 
         stime = time.time()
         delmesh = Delaunay(s.pos[mask],qhull_options="Qbb Qc Qz Q12 Q3 Q5 Q8")
@@ -119,16 +132,38 @@ if __name__ == '__main__':
         print("Neighbors: {:.2f} s".format(time.time()-stime),flush=True)
 
         stime = time.time()
-        allclouds = get_allclouds(Tmask,neighbors,verbose=False)
-        # allclouds = get_allclouds(s,Tmask,verbose=False)
-        print("Get allclouds: {:.2f} s".format(time.time()-stime),flush=True)
-        cloudids = [s.id[mask][c] for c in allclouds]
+        cloudidxs = get_allclouds(coldidxs,neighbors)
+        print("Get cloudidxs: {:.2f} s".format(time.time()-stime),flush=True)
+
+        stime = time.time()
+        # cloudids = []
+        # for cli in tqdm(np.unique(cloudidxs[cloudidxs>-1])):
+        #     cloudids.append(s.id[mask][np.isin(cloudidxs,cli)])
+
+        # 1) pick off only the positions you actually care about
+        ids    = s.part0.id[mask]               # shape = M 
+        labels = cloudidxs                # shape = M (same alignment as ids)
+        valid  = labels >= 0
+        ids    = ids[valid]
+        labels = labels[valid]
+
+        # 2) sort everything by label
+        order = np.argsort(labels)
+        labels = labels[order]
+        ids    = ids[order]
+
+        # 3) split into per-cloud arrays
+        #   SciPy gave you labels in 0..(K-1), so we can do a bincount
+        counts    = np.bincount(labels)          # length = K
+        split_idx = np.cumsum(counts)[:-1]       # split points between each group
+        cloudids  = np.split(ids, split_idx)     # list of length K
 
         final = np.empty(len(cloudids),dtype=object)
         final[:] = cloudids
         np.save(outdir+"/allclouds_{}_IDs.npy".format(snum),final)
+        print("Get IDs and save: {:.2f} s".format(time.time()-stime),flush=True)
 
         s.close()
-        del allclouds,final,s,s5
+        del cloudidxs,cloudids,final,s,s5
         gc.collect()
         print("{} done.\n".format(fname),flush=True)
