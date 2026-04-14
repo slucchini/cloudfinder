@@ -30,6 +30,12 @@ Variant of `find_clouds.py` that identifies clouds by density rather than temper
 
 **Arguments:** `SNAP_DIR OUT_DIR OVERWRITE [SNAPNUM]` (OVERWRITE is 0/1; SNAPNUM optional, -1 for all)
 
+### `lib/cloud_edges_fast.py`
+
+For each cloud in a single snapshot, builds a layered boundary catalog: the first layer is the set of Delaunay neighbors of cloud cells that aren't cloud members, and each subsequent layer expands outward one neighbor-ring farther. Writes `allclouds_{snum}_boundary.npy` (a length-`ncloud` object array of per-cloud lists, each of length `nlevels=10`).
+
+**Arguments:** `SNAP_DIR OUT_DIR OVERWRITE [SNAPNUM]` (OVERWRITE is 0/1; SNAPNUM optional, -1 for all). Requires `allclouds_{snum}_IDs.npy` to already exist in `OUT_DIR`.
+
 ### `lib/build_network_ids.py` (recommended)
 
 Tracks clouds across snapshots by matching Arepo gas cell particle IDs between consecutive snapshot catalogs. Builds a `networkx` graph where nodes are clouds and edges connect clouds in adjacent snapshots that share any particle. Uses vectorized `searchsorted` on sorted ID arrays, giving roughly O(total_particles) per snapshot pair.
