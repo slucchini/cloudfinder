@@ -20,9 +20,15 @@ python3 lib/build_network_ids.py $SNAP_DIR $OUT_DIR 200 300
 
 Identifies clouds in a single snapshot. Selects cold gas cells, builds a Delaunay triangulation to determine neighbors, and uses connected components on the neighbor graph to group cold cells into discrete clouds. Writes a catalog of clouds (and their member particle IDs) to `OUT_DIR`.
 
-By default, identifies clouds within 200 comoving kpc/h centered around the black hole particle. Clouds are classified as contiguous groupings of connected Voronoi cells which all have temperatures below $10^{4.5}$ K. This cutoff was chosen for use with the [IllustrisTNG](https://tng-project.org) simulations which have a pressure floor corresponding to a temperature of $10^4$ K.
+By default, identifies clouds within 200 comoving kpc/h centered around the black hole particle with the temperature cutoff at $10^{4.5}$ K. This cutoff was chosen for use with the [IllustrisTNG](https://tng-project.org) simulations which have a pressure floor corresponding to a temperature of $10^4$ K.
 
-**Arguments:** `SNAP_DIR OUT_DIR SNAPNUM`
+**Arguments:** `SNAP_DIR OUT_DIR OVERWRITE [SNAPNUM]` (OVERWRITE is 0/1; SNAPNUM optional, -1 for all)
+
+### `lib/find_clouds_dens_levels.py`
+
+Variant of `find_clouds.py` that identifies clouds by density rather than temperature. Builds the Delaunay triangulation once per snapshot, then sweeps through density thresholds in multiplicative steps (`ddens=2` by default) from `10 × min(rho)` up to `max(rho)`. At each level, runs connected components on the subset of cells above the threshold and writes `allclouds_{snum}_IDs_dens{i}.npy` into a `denscut_{ddens}` subdirectory of `OUT_DIR`. Useful for building nested cloud catalogs across a range of density cuts.
+
+**Arguments:** `SNAP_DIR OUT_DIR OVERWRITE [SNAPNUM]` (OVERWRITE is 0/1; SNAPNUM optional, -1 for all)
 
 ### `lib/build_network_ids.py` (recommended)
 
